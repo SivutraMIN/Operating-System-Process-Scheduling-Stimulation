@@ -1,0 +1,1177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OS Process Scheduling Simulator</title>
+
+  <!-- PyScript (Runs CPython in WebAssembly directly in the browser) -->
+  <link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css" />
+  <script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
+
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --border: #cbd5e1;
+      --text: #0f172a;
+      --muted: #475569;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --success: #059669;
+      --danger: #dc2626;
+    }
+
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+
+    .container { max-width: 1150px; margin: 0 auto; padding: 20px; }
+    .hidden { display: none !important; }
+
+    /* Loading Overlay while Pyodide initializes */
+    #loading-banner {
+      background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
+      padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-weight: 500;
+    }
+
+    /* Home Screen */
+    .home-wrapper {
+      min-height: 85vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; text-align: center;
+    }
+    .home-title { font-size: 2rem; font-weight: 700; margin-bottom: 6px; }
+    .home-sub { color: var(--muted); font-size: 1.05rem; margin-bottom: 32px; }
+    .cards-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px; width: 100%; max-width: 820px; text-align: left;
+    }
+    .mode-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 24px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); display: flex; flex-direction: column;
+    }
+    .mode-card h3 { margin: 0 0 8px 0; font-size: 1.25rem; }
+    .mode-card ul { padding-left: 18px; color: var(--muted); line-height: 1.6; flex-grow: 1; }
+
+    /* Buttons & Inputs */
+    button {
+      background: var(--primary); color: #fff; border: none; border-radius: 6px;
+      padding: 8px 14px; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: var(--primary-hover); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary { background: #e2e8f0; color: #1e293b; }
+    button.secondary:hover:not(:disabled) { background: #cbd5e1; }
+    button.success { background: var(--success); }
+    button.danger { background: var(--danger); }
+
+    input, select, textarea {
+      padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 0.9rem; background: #fff;
+    }
+    input[type="number"] { width: 75px; }
+    input[type="text"] { width: 80px; }
+
+    /* Simulator Layout */
+    .top-bar { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+    .top-bar h2 { margin: 0; font-size: 1.35rem; }
+
+    .panel {
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px; margin-bottom: 16px;
+    }
+    .panel-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 12px; color: #334155; }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .row:last-child { margin-bottom: 0; }
+    label { font-size: 0.88rem; font-weight: 600; color: var(--muted); }
+
+    /* Table */
+    .table-wrap { max-height: 290px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; text-align: center; }
+    th { background: #f1f5f9; position: sticky; top: 0; padding: 10px; border-bottom: 1px solid var(--border); }
+    td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }
+    .metrics-bar { margin-top: 12px; font-weight: 700; font-size: 0.98rem; text-align: center; }
+
+    /* Gantt Chart */
+    .gantt-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: #fff; padding: 6px; }
+    canvas { display: block; }
+    .timeline-header { font-weight: 700; font-size: 0.92rem; margin-bottom: 8px; }
+
+    /* Modal for Paste CSV */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5);
+      display: flex; align-items: center; justify-content: center; z-index: 50;
+    }
+    .modal {
+      background: #fff; padding: 20px; border-radius: 10px; width: 90%; max-width: 460px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+    }
+    .modal textarea { width: 100%; height: 150px; font-family: monospace; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="loading-banner">⏳ Initializing Python WebAssembly runtime... (takes ~2 seconds on first load)</div>
+
+    <!-- ========================================== -->
+    <!-- VIEW 1: HOME SCREEN                        -->
+    <!-- ========================================== -->
+    <div id="view-home" class="home-wrapper">
+      <div class="home-title">OS Process Scheduling Simulator</div>
+      <div class="home-sub">Select a simulation mode to begin</div>
+
+      <div class="cards-grid">
+        <div class="mode-card">
+          <h3>Mode 1: Batch Simulation</h3>
+          <ul>
+            <li>Configure a fixed set of processes manually, via auto-generator, or from CSV.</li>
+            <li>Run a complete schedule in one click.</li>
+            <li>Switch between FCFS, SJF, SRTF, Priority, and Round Robin on the exact same dataset.</li>
+          </ul>
+          <button id="btn-open-batch" disabled>Open Batch Simulator →</button>
+        </div>
+
+        <div class="mode-card">
+          <h3>Mode 2: Continuous Stream</h3>
+          <ul>
+            <li>Advances the CPU clock tick-by-tick.</li>
+            <li>Continuously appends newly spawned processes onto the existing table.</li>
+            <li>Inject custom processes mid-run and watch live preemption and Gantt growth.</li>
+          </ul>
+          <button id="btn-open-continuous" disabled>Open Continuous Simulator →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- VIEW 2: BATCH SIMULATOR                    -->
+    <!-- ========================================== -->
+    <div id="view-batch" class="hidden">
+      <div class="top-bar">
+        <button class="secondary" id="btn-batch-home">← Back to Home</button>
+        <h2>Batch Process Scheduling Simulator</h2>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Process & Algorithm Configuration</div>
+        <div class="row">
+          <label>PID:</label><input type="text" id="b-pid" placeholder="P6" />
+          <label>Arrival:</label><input type="number" id="b-arrival" min="0" />
+          <label>Burst:</label><input type="number" id="b-burst" min="1" />
+          <label>Priority (1=High):</label><input type="number" id="b-priority" value="1" min="1" />
+          <button id="b-add-btn">+ Add Process</button>
+          <button class="danger" id="b-clear-btn">Clear Table</button>
+        </div>
+
+        <div class="row">
+          <label>Auto-Gen Count:</label><input type="number" id="b-gen-count" value="5" min="1" max="30" />
+          <button class="secondary" id="b-gen-btn">Auto-Generate</button>
+
+          <label>Algorithm:</label>
+          <select id="b-algo">
+            <option>First Come First Serve (FCFS)</option>
+            <option>Shortest Job First (SJF)</option>
+            <option>Preemptive Shortest Job First (SRTF)</option>
+            <option>Priority (Non-Preemptive)</option>
+            <option>Round Robin</option>
+          </select>
+
+          <label>Quantum:</label><input type="number" id="b-quantum" value="2" min="1" disabled />
+          <button class="success" id="b-run-btn">▶ Run Simulation</button>
+        </div>
+
+        <div class="row">
+          <label>CSV Data:</label>
+          <input type="file" id="b-csv-file" accept=".csv,.txt" class="hidden" />
+          <button class="secondary" id="b-import-csv">Import CSV File...</button>
+          <button class="secondary" id="b-paste-csv">Paste CSV Input...</button>
+          <button class="secondary" id="b-copy-csv">Copy Table as CSV</button>
+          <button class="secondary" id="b-save-csv">Save CSV File...</button>
+          <span id="b-status" style="color:#059669; font-weight:600; font-size:0.88rem;"></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Process Queue & Scheduling Metrics</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Process ID</th><th>Arrival Time</th><th>Burst Time</th><th>Priority</th>
+                <th>Completion Time</th><th>Turnaround Time</th><th>Waiting Time</th>
+              </tr>
+            </thead>
+            <tbody id="b-tbody"></tbody>
+          </table>
+        </div>
+        <div class="metrics-bar" id="b-metrics">Average Turnaround Time: - | Average Waiting Time: -</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">CPU Gantt Chart & Execution Timeline</div>
+        <div class="timeline-header" id="b-timeline-label">Timeline: Not executed yet</div>
+        <div class="gantt-scroll">
+          <canvas id="b-canvas" width="900" height="145"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- VIEW 3: CONTINUOUS STREAM SIMULATOR        -->
+    <!-- ========================================== -->
+    <div id="view-continuous" class="hidden">
+      <div class="top-bar">
+        <button class="secondary" id="btn-cont-home">← Back to Home</button>
+        <h2>Continuous Stream Process Scheduling Simulator</h2>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Process & Algorithm Configuration</div>
+        <div class="row">
+          <label>PID:</label><input type="text" id="c-pid" placeholder="P5" />
+          <label>Arrival:</label><input type="number" id="c-arrival" min="0" placeholder="Now" />
+          <label>Burst:</label><input type="number" id="c-burst" min="1" />
+          <label>Priority (1=High):</label><input type="number" id="c-priority" value="1" min="1" />
+          <button id="c-add-btn">+ Inject Process</button>
+          <button class="danger" id="c-clear-btn">Reset / Clear All</button>
+        </div>
+
+        <div class="row">
+          <label>Initial Count:</label><input type="number" id="c-gen-count" value="4" min="1" max="30" />
+          <button class="secondary" id="c-gen-btn">New Seed Table</button>
+
+          <label>Algorithm:</label>
+          <select id="c-algo">
+            <option>First Come First Serve (FCFS)</option>
+            <option>Shortest Job First (SJF)</option>
+            <option>Preemptive Shortest Job First (SRTF)</option>
+            <option>Priority (Non-Preemptive)</option>
+            <option>Round Robin</option>
+          </select>
+
+          <label>Quantum:</label><input type="number" id="c-quantum" value="2" min="1" disabled />
+          <button id="c-finish-btn">▶ Finish Current Queue</button>
+        </div>
+
+        <div class="row">
+          <button class="success" id="c-stream-btn">∞ Start Continuous Stream</button>
+          <label>Tick Speed (ms):</label><input type="number" id="c-speed" value="350" min="50" max="2000" step="50" />
+          <label>Spawn Every (ticks):</label><input type="number" id="c-spawn-rate" value="4" min="1" max="20" />
+
+          <input type="file" id="c-csv-file" accept=".csv,.txt" class="hidden" />
+          <button class="secondary" id="c-import-csv">Import CSV...</button>
+          <button class="secondary" id="c-paste-csv">Paste CSV...</button>
+          <button class="secondary" id="c-copy-csv">Copy CSV</button>
+          <button class="secondary" id="c-save-csv">Save CSV...</button>
+          <span id="c-status" style="font-weight:700; font-size:0.9rem; color:#334155;">Clock: 0 | Ready</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Live Process Queue & Scheduling Metrics</div>
+        <div class="table-wrap" id="c-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>PID</th><th>Arrival</th><th>Burst</th><th>Remaining</th><th>Priority</th>
+                <th>Status</th><th>Completion</th><th>Turnaround</th><th>Waiting</th>
+              </tr>
+            </thead>
+            <tbody id="c-tbody"></tbody>
+          </table>
+        </div>
+        <div class="metrics-bar" id="c-metrics">Completed: 0 / 0 | Average Turnaround Time: - | Average Waiting Time: -</div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">CPU Gantt Chart & Execution Timeline</div>
+        <div class="timeline-header" id="c-timeline-label">Timeline: Not executed yet</div>
+        <div class="gantt-scroll" id="c-gantt-scroll">
+          <canvas id="c-canvas" width="900" height="145"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CSV Paste Modal -->
+  <div id="csv-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h3 style="margin-top:0;">Paste CSV Process Input</h3>
+      <p style="font-size:0.88rem; color:#475569; margin:0;">Format: <code>PID, Arrival, Burst, [Optional Priority]</code></p>
+      <textarea id="csv-paste-area">PID,Arrival,Burst,Priority
+P1,0,6,2
+P2,2,4,1
+P3,4,8,3
+P4,5,3,2</textarea>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="secondary" id="csv-modal-cancel">Cancel</button>
+        <button id="csv-modal-load">Load Processes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- PYTHON ENGINE & DOM BINDINGS (PYSCRIPT)    -->
+  <!-- ========================================== -->
+  <script type="py">
+    from dataclasses import dataclass
+    from typing import List, Tuple, Optional
+    import csv
+    import io
+    import random
+    from js import document, window, alert, Blob, URL
+    from pyodide.ffi import create_proxy
+
+    # ==========================================
+    # 1. DATA MODEL
+    # ==========================================
+    @dataclass
+    class Process:
+        pid: str
+        arrival_time: int
+        burst_time: int
+        priority: int = 1
+        remaining_time: int = 0
+        completion_time: Optional[int] = None
+        turnaround_time: Optional[int] = None
+        waiting_time: Optional[int] = None
+        state: str = "Ready"
+
+        def __post_init__(self):
+            if self.remaining_time == 0 and self.completion_time is None:
+                self.remaining_time = self.burst_time
+
+    # ==========================================
+    # 2. BATCH SCHEDULING ENGINE
+    # ==========================================
+    class BatchScheduler:
+        @staticmethod
+        def _clone(processes: List[Process]) -> List[Process]:
+            return [Process(p.pid, p.arrival_time, p.burst_time, p.priority) for p in processes]
+
+        @staticmethod
+        def _merge_gantt(raw_gantt: List[Tuple[str, int, int]]) -> List[Tuple[str, int, int]]:
+            if not raw_gantt:
+                return []
+            merged = [raw_gantt[0]]
+            for pid, start, end in raw_gantt[1:]:
+                prev_pid, prev_start, prev_end = merged[-1]
+                if pid == prev_pid and prev_end == start:
+                    merged[-1] = (prev_pid, prev_start, end)
+                else:
+                    merged.append((pid, start, end))
+            return merged
+
+        @staticmethod
+        def fcfs(processes: List[Process]) -> Tuple[List[Process], List[Tuple[str, int, int]]]:
+            procs = BatchScheduler._clone(processes)
+            procs.sort(key=lambda x: (x.arrival_time, x.pid))
+            current_time = 0
+            gantt = []
+            for p in procs:
+                if current_time < p.arrival_time:
+                    gantt.append(("IDLE", current_time, p.arrival_time))
+                    current_time = p.arrival_time
+                start_time = current_time
+                current_time += p.burst_time
+                gantt.append((p.pid, start_time, current_time))
+                p.completion_time = current_time
+                p.turnaround_time = p.completion_time - p.arrival_time
+                p.waiting_time = p.turnaround_time - p.burst_time
+            return procs, gantt
+
+        @staticmethod
+        def sjf_non_preemptive(processes: List[Process]) -> Tuple[List[Process], List[Tuple[str, int, int]]]:
+            procs = BatchScheduler._clone(processes)
+            n = len(procs)
+            completed = 0
+            current_time = 0
+            is_completed = [False] * n
+            gantt = []
+            while completed != n:
+                idx = -1
+                min_burst = float('inf')
+                for i in range(n):
+                    if procs[i].arrival_time <= current_time and not is_completed[i]:
+                        if procs[i].burst_time < min_burst:
+                            min_burst = procs[i].burst_time
+                            idx = i
+                        elif procs[i].burst_time == min_burst and procs[i].arrival_time < procs[idx].arrival_time:
+                            idx = i
+                if idx != -1:
+                    start_time = current_time
+                    current_time += procs[idx].burst_time
+                    gantt.append((procs[idx].pid, start_time, current_time))
+                    procs[idx].completion_time = current_time
+                    procs[idx].turnaround_time = procs[idx].completion_time - procs[idx].arrival_time
+                    procs[idx].waiting_time = procs[idx].turnaround_time - procs[idx].burst_time
+                    is_completed[idx] = True
+                    completed += 1
+                else:
+                    gantt.append(("IDLE", current_time, current_time + 1))
+                    current_time += 1
+            return procs, BatchScheduler._merge_gantt(gantt)
+
+        @staticmethod
+        def sjf_preemptive(processes: List[Process]) -> Tuple[List[Process], List[Tuple[str, int, int]]]:
+            procs = BatchScheduler._clone(processes)
+            n = len(procs)
+            completed = 0
+            current_time = 0
+            raw_gantt = []
+            while completed != n:
+                idx = -1
+                min_rem = float('inf')
+                for i in range(n):
+                    if procs[i].arrival_time <= current_time and procs[i].remaining_time > 0:
+                        if procs[i].remaining_time < min_rem:
+                            min_rem = procs[i].remaining_time
+                            idx = i
+                        elif procs[i].remaining_time == min_rem and procs[i].arrival_time < procs[idx].arrival_time:
+                            idx = i
+                if idx != -1:
+                    raw_gantt.append((procs[idx].pid, current_time, current_time + 1))
+                    procs[idx].remaining_time -= 1
+                    current_time += 1
+                    if procs[idx].remaining_time == 0:
+                        completed += 1
+                        procs[idx].completion_time = current_time
+                        procs[idx].turnaround_time = procs[idx].completion_time - procs[idx].arrival_time
+                        procs[idx].waiting_time = procs[idx].turnaround_time - procs[idx].burst_time
+                else:
+                    raw_gantt.append(("IDLE", current_time, current_time + 1))
+                    current_time += 1
+            return procs, BatchScheduler._merge_gantt(raw_gantt)
+
+        @staticmethod
+        def priority_non_preemptive(processes: List[Process]) -> Tuple[List[Process], List[Tuple[str, int, int]]]:
+            procs = BatchScheduler._clone(processes)
+            n = len(procs)
+            completed = 0
+            current_time = 0
+            is_completed = [False] * n
+            gantt = []
+            while completed != n:
+                idx = -1
+                best_priority = float('inf')
+                for i in range(n):
+                    if procs[i].arrival_time <= current_time and not is_completed[i]:
+                        if procs[i].priority < best_priority:
+                            best_priority = procs[i].priority
+                            idx = i
+                        elif procs[i].priority == best_priority and procs[i].arrival_time < procs[idx].arrival_time:
+                            idx = i
+                if idx != -1:
+                    start_time = current_time
+                    current_time += procs[idx].burst_time
+                    gantt.append((procs[idx].pid, start_time, current_time))
+                    procs[idx].completion_time = current_time
+                    procs[idx].turnaround_time = procs[idx].completion_time - procs[idx].arrival_time
+                    procs[idx].waiting_time = procs[idx].turnaround_time - procs[idx].burst_time
+                    is_completed[idx] = True
+                    completed += 1
+                else:
+                    gantt.append(("IDLE", current_time, current_time + 1))
+                    current_time += 1
+            return procs, BatchScheduler._merge_gantt(gantt)
+
+        @staticmethod
+        def round_robin(processes: List[Process], quantum: int) -> Tuple[List[Process], List[Tuple[str, int, int]]]:
+            procs = BatchScheduler._clone(processes)
+            procs.sort(key=lambda x: (x.arrival_time, x.pid))
+            n = len(procs)
+            current_time = 0
+            completed = 0
+            queue = []
+            visited = [False] * n
+            gantt = []
+            if n > 0 and procs[0].arrival_time > 0:
+                gantt.append(("IDLE", 0, procs[0].arrival_time))
+                current_time = procs[0].arrival_time
+            for i in range(n):
+                if procs[i].arrival_time <= current_time:
+                    queue.append(i)
+                    visited[i] = True
+            while completed != n:
+                if not queue:
+                    for i in range(n):
+                        if not visited[i]:
+                            gantt.append(("IDLE", current_time, procs[i].arrival_time))
+                            current_time = procs[i].arrival_time
+                            queue.append(i)
+                            visited[i] = True
+                            break
+                idx = queue.pop(0)
+                exec_time = min(quantum, procs[idx].remaining_time)
+                start_time = current_time
+                current_time += exec_time
+                procs[idx].remaining_time -= exec_time
+                gantt.append((procs[idx].pid, start_time, current_time))
+                for i in range(n):
+                    if not visited[i] and procs[i].arrival_time <= current_time:
+                        queue.append(i)
+                        visited[i] = True
+                if procs[idx].remaining_time == 0:
+                    completed += 1
+                    procs[idx].completion_time = current_time
+                    procs[idx].turnaround_time = procs[idx].completion_time - procs[idx].arrival_time
+                    procs[idx].waiting_time = procs[idx].turnaround_time - procs[idx].burst_time
+                else:
+                    queue.append(idx)
+            return procs, BatchScheduler._merge_gantt(gantt)
+
+    # ==========================================
+    # 3. CONTINUOUS STREAM ENGINE
+    # ==========================================
+    class LiveSchedulerEngine:
+        def __init__(self):
+            self.reset()
+
+        def reset(self):
+            self.current_time: int = 0
+            self.processes: List[Process] = []
+            self.ready_queue: List[Process] = []
+            self.running_proc: Optional[Process] = None
+            self.quantum_used: int = 0
+            self.gantt: List[Tuple[str, int, int]] = []
+            self.next_pid_num: int = 1
+
+        def load_processes(self, proc_list: List[Process]):
+            self.reset()
+            for p in proc_list:
+                clone = Process(p.pid, p.arrival_time, p.burst_time, p.priority)
+                self.processes.append(clone)
+                if p.pid.startswith("P") and p.pid[1:].isdigit():
+                    self.next_pid_num = max(self.next_pid_num, int(p.pid[1:]) + 1)
+                else:
+                    self.next_pid_num += 1
+
+        def append_process(self, proc: Process):
+            self.processes.append(proc)
+            if proc.pid.startswith("P") and proc.pid[1:].isdigit():
+                self.next_pid_num = max(self.next_pid_num, int(proc.pid[1:]) + 1)
+            else:
+                self.next_pid_num += 1
+
+        def spawn_next_process(self) -> Process:
+            pid = f"P{self.next_pid_num}"
+            self.next_pid_num += 1
+            arrival = self.current_time + random.randint(0, 2)
+            burst = random.randint(2, 8)
+            priority = random.randint(1, 5)
+            new_proc = Process(pid, arrival, burst, priority)
+            self.processes.append(new_proc)
+            return new_proc
+
+        def has_unfinished_work(self) -> bool:
+            return any(p.completion_time is None for p in self.processes)
+
+        def _record_gantt_tick(self, pid: str, start: int, end: int):
+            if self.gantt and self.gantt[-1][0] == pid and self.gantt[-1][2] == start:
+                prev_pid, prev_start, _ = self.gantt[-1]
+                self.gantt[-1] = (prev_pid, prev_start, end)
+            else:
+                self.gantt.append((pid, start, end))
+
+        def step_one_tick(self, algorithm: str, quantum: int = 2):
+            for p in self.processes:
+                if (
+                    p.completion_time is None
+                    and p.arrival_time <= self.current_time
+                    and p is not self.running_proc
+                    and p not in self.ready_queue
+                ):
+                    p.state = "Ready"
+                    self.ready_queue.append(p)
+
+            if self.running_proc is not None:
+                if algorithm == "Preemptive Shortest Job First (SRTF)" and self.ready_queue:
+                    shortest_ready = min(self.ready_queue, key=lambda x: (x.remaining_time, x.arrival_time))
+                    if shortest_ready.remaining_time < self.running_proc.remaining_time:
+                        self.running_proc.state = "Ready"
+                        self.ready_queue.append(self.running_proc)
+                        self.running_proc = None
+                elif algorithm == "Round Robin" and self.quantum_used >= quantum:
+                    self.running_proc.state = "Ready"
+                    self.ready_queue.append(self.running_proc)
+                    self.running_proc = None
+                    self.quantum_used = 0
+
+            if self.running_proc is None and self.ready_queue:
+                if algorithm == "First Come First Serve (FCFS)":
+                    self.ready_queue.sort(key=lambda x: (x.arrival_time, x.pid))
+                    self.running_proc = self.ready_queue.pop(0)
+                elif algorithm in ("Shortest Job First (SJF)", "Preemptive Shortest Job First (SRTF)"):
+                    self.ready_queue.sort(key=lambda x: (x.remaining_time, x.arrival_time, x.pid))
+                    self.running_proc = self.ready_queue.pop(0)
+                elif algorithm == "Priority (Non-Preemptive)":
+                    self.ready_queue.sort(key=lambda x: (x.priority, x.arrival_time, x.pid))
+                    self.running_proc = self.ready_queue.pop(0)
+                elif algorithm == "Round Robin":
+                    self.running_proc = self.ready_queue.pop(0)
+                    self.quantum_used = 0
+
+            tick_start = self.current_time
+            self.current_time += 1
+
+            if self.running_proc is not None:
+                self.running_proc.state = "Running"
+                self.running_proc.remaining_time -= 1
+                self.quantum_used += 1
+                self._record_gantt_tick(self.running_proc.pid, tick_start, self.current_time)
+
+                if self.running_proc.remaining_time == 0:
+                    self.running_proc.state = "Completed"
+                    self.running_proc.completion_time = self.current_time
+                    self.running_proc.turnaround_time = self.running_proc.completion_time - self.running_proc.arrival_time
+                    self.running_proc.waiting_time = self.running_proc.turnaround_time - self.running_proc.burst_time
+                    self.running_proc = None
+                    self.quantum_used = 0
+            else:
+                self._record_gantt_tick("IDLE", tick_start, self.current_time)
+
+    # ==========================================
+    # 4. HTML5 CANVAS GANTT RENDERER
+    # ==========================================
+    def draw_gantt_canvas(canvas_id: str, label_id: str, gantt: List[Tuple[str, int, int]], color_map: dict, scroll_id: str = None):
+        canvas = document.getElementById(canvas_id)
+        label = document.getElementById(label_id)
+        ctx = canvas.getContext("2d")
+
+        if not gantt:
+            canvas.width = 900
+            ctx.clearRect(0, 0, canvas.width, canvas.height)
+            label.innerText = "Timeline: Not executed yet"
+            return
+
+        begin_time = gantt[0][1]
+        end_time = gantt[-1][2]
+        total_duration = max(1, end_time - begin_time)
+        label.innerText = f"Timeline: Begins at {begin_time} → Ends at {end_time} (Total Span: {total_duration})"
+
+        min_px_per_unit = max(840 / total_duration, 34)
+        total_chart_width = total_duration * min_px_per_unit
+        left_margin = 30
+        right_margin = 30
+        canvas.width = int(left_margin + total_chart_width + right_margin)
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+        y_top = 20
+        y_bottom = 72
+        axis_y = 92
+
+        # Horizontal timeline axis
+        ctx.strokeStyle = "#4b5563"
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(left_margin, axis_y)
+        ctx.lineTo(left_margin + total_chart_width, axis_y)
+        ctx.stroke()
+
+        boundaries = []
+        for pid, start, end in gantt:
+            if not boundaries or boundaries[-1] != start:
+                boundaries.append(start)
+            boundaries.append(end)
+
+        for pid, start, end in gantt:
+            x1 = left_margin + (start - begin_time) * min_px_per_unit
+            x2 = left_margin + (end - begin_time) * min_px_per_unit
+            duration = end - start
+
+            if pid == "IDLE":
+                color = "#e5e7eb"
+            else:
+                if pid not in color_map:
+                    r = random.randint(145, 235)
+                    g = random.randint(145, 235)
+                    b = random.randint(145, 235)
+                    color_map[pid] = f"rgb({r},{g},{b})"
+                color = color_map[pid]
+
+            ctx.fillStyle = color
+            ctx.fillRect(x1, y_top, x2 - x1, y_bottom - y_top)
+            ctx.strokeStyle = "#1f2937"
+            ctx.lineWidth = 1.5
+            ctx.strokeRect(x1, y_top, x2 - x1, y_bottom - y_top)
+
+            center_x = (x1 + x2) / 2
+            ctx.fillStyle = "#111827"
+            ctx.textAlign = "center"
+            if (x2 - x1) >= 48:
+                ctx.font = "bold 13px sans-serif"
+                ctx.fillText(pid, center_x, y_top + 22)
+                ctx.font = "11px sans-serif"
+                ctx.fillStyle = "#374151"
+                ctx.fillText(f"({duration})", center_x, y_top + 40)
+            elif (x2 - x1) >= 24:
+                ctx.font = "bold 12px sans-serif"
+                ctx.fillText(pid, center_x, (y_top + y_bottom) / 2 + 4)
+
+        last_label_x = -999
+        row_toggle = False
+        for idx, t in enumerate(boundaries):
+            x = left_margin + (t - begin_time) * min_px_per_unit
+
+            ctx.save()
+            ctx.setLineDash([2, 2])
+            ctx.strokeStyle = "#6b7280"
+            ctx.lineWidth = 1
+            ctx.beginPath()
+            ctx.moveTo(x, y_bottom)
+            ctx.lineTo(x, axis_y + 5)
+            ctx.stroke()
+            ctx.restore()
+
+            ctx.fillStyle = "#111827"
+            ctx.beginPath()
+            ctx.arc(x, axis_y, 3, 0, 6.28318)
+            ctx.fill()
+
+            if (x - last_label_x) < 28:
+                row_toggle = not row_toggle
+            else:
+                row_toggle = False
+
+            label_y = axis_y + (28 if row_toggle else 16)
+            ctx.font = "bold 12px sans-serif" if idx in (0, len(boundaries) - 1) else "12px sans-serif"
+            ctx.textAlign = "center"
+            ctx.fillText(str(t), x, label_y)
+            last_label_x = x
+
+        if scroll_id:
+            scroller = document.getElementById(scroll_id)
+            scroller.scrollLeft = scroller.scrollWidth
+
+    # ==========================================
+    # 5. APPLICATION STATE & EVENT HANDLERS
+    # ==========================================
+    batch_processes: List[Process] = []
+    batch_results: List[Process] = []
+    batch_colors = {}
+
+    live_engine = LiveSchedulerEngine()
+    live_colors = {}
+    is_streaming = False
+    stream_timer_id = None
+    ticks_since_spawn = 0
+    active_csv_target = "batch"
+
+    def parse_csv_rows(raw_text: str) -> List[Process]:
+        reader = csv.reader(io.StringIO(raw_text.strip()))
+        parsed = []
+        seen = set()
+        for line_num, row in enumerate(reader, start=1):
+            row = [c.strip() for c in row]
+            if not row or all(c == "" for c in row):
+                continue
+            if line_num == 1 and len(row) >= 3:
+                try:
+                    int(row[1])
+                    int(row[2])
+                except ValueError:
+                    continue
+            if len(row) < 3:
+                raise ValueError(f"Line {line_num}: Expected at least 3 columns (PID, Arrival, Burst).")
+            pid = row[0]
+            if not pid or pid in seen:
+                raise ValueError(f"Line {line_num}: Empty or duplicate PID '{pid}'.")
+            arrival = int(row[1])
+            burst = int(row[2])
+            priority = int(row[3]) if len(row) >= 4 and row[3] != "" else 1
+            if arrival < 0 or burst <= 0 or priority < 1:
+                raise ValueError(f"Line {line_num}: Arrival >= 0, Burst > 0, Priority >= 1 required.")
+            seen.add(pid)
+            parsed.append(Process(pid, arrival, burst, priority))
+        if not parsed:
+            raise ValueError("No valid process rows found.")
+        return parsed
+
+    def download_csv(filename: str, content: str):
+        blob = Blob.new([content], {type: "text/csv;charset=utf-8;"})
+        url = URL.createObjectURL(blob)
+        link = document.createElement("a")
+        link.href = url
+        link.download = filename
+        link.click()
+        URL.revokeObjectURL(url)
+
+    # --- Navigation ---
+    def show_view(view_name: str):
+        if view_name != "continuous" and is_streaming:
+            stop_continuous_stream()
+        for v in ("view-home", "view-batch", "view-continuous"):
+            el = document.getElementById(v)
+            if v == f"view-{view_name}":
+                el.classList.remove("hidden")
+            else:
+                el.classList.add("hidden")
+
+    # --- Batch Mode Functions ---
+    def render_batch_table(proc_list: List[Process], calculated: bool):
+        tbody = document.getElementById("b-tbody")
+        rows_html = []
+        for p in proc_list:
+            comp = p.completion_time if calculated else "-"
+            tat = p.turnaround_time if calculated else "-"
+            wt = p.waiting_time if calculated else "-"
+            rows_html.append(
+                f"<tr><td>{p.pid}</td><td>{p.arrival_time}</td><td>{p.burst_time}</td>"
+                f"<td>{p.priority}</td><td>{comp}</td><td>{tat}</td><td>{wt}</td></tr>"
+            )
+        tbody.innerHTML = "".join(rows_html)
+
+    def batch_generate(event=None):
+        nonlocal batch_processes, batch_results
+        try:
+            count = max(1, min(50, int(document.getElementById("b-gen-count").value)))
+        except ValueError:
+            count = 5
+        batch_processes = []
+        batch_results = []
+        batch_colors.clear()
+        arr = 0
+        for i in range(1, count + 1):
+            arr += random.randint(0, 3)
+            batch_processes.append(Process(f"P{i}", arr, random.randint(1, 10), random.randint(1, 5)))
+        render_batch_table(batch_processes, False)
+        document.getElementById("b-metrics").innerText = "Average Turnaround Time: - | Average Waiting Time: -"
+        draw_gantt_canvas("b-canvas", "b-timeline-label", [], batch_colors)
+
+    def batch_add(event=None):
+        pid = document.getElementById("b-pid").value.strip()
+        try:
+            arr = int(document.getElementById("b-arrival").value)
+            burst = int(document.getElementById("b-burst").value)
+            prio = int(document.getElementById("b-priority").value)
+            if not pid or arr < 0 or burst <= 0 or prio < 1:
+                raise ValueError
+        except ValueError:
+            alert("Enter valid PID, Arrival >= 0, Burst > 0, and Priority >= 1.")
+            return
+        if any(p.pid == pid for p in batch_processes):
+            alert(f"Process '{pid}' already exists.")
+            return
+        batch_processes.append(Process(pid, arr, burst, prio))
+        batch_results.clear()
+        render_batch_table(batch_processes, False)
+        document.getElementById("b-pid").value = ""
+        document.getElementById("b-arrival").value = ""
+        document.getElementById("b-burst").value = ""
+
+    def batch_clear(event=None):
+        batch_processes.clear()
+        batch_results.clear()
+        batch_colors.clear()
+        render_batch_table([], False)
+        document.getElementById("b-metrics").innerText = "Average Turnaround Time: - | Average Waiting Time: -"
+        draw_gantt_canvas("b-canvas", "b-timeline-label", [], batch_colors)
+
+    def batch_run(event=None):
+        nonlocal batch_results
+        if not batch_processes:
+            alert("Add or auto-generate processes first.")
+            return
+        algo = document.getElementById("b-algo").value
+        if algo == "First Come First Serve (FCFS)":
+            results, gantt = BatchScheduler.fcfs(batch_processes)
+        elif algo == "Shortest Job First (SJF)":
+            results, gantt = BatchScheduler.sjf_non_preemptive(batch_processes)
+        elif algo == "Preemptive Shortest Job First (SRTF)":
+            results, gantt = BatchScheduler.sjf_preemptive(batch_processes)
+        elif algo == "Priority (Non-Preemptive)":
+            results, gantt = BatchScheduler.priority_non_preemptive(batch_processes)
+        elif algo == "Round Robin":
+            try:
+                q = int(document.getElementById("b-quantum").value)
+                if q <= 0:
+                    raise ValueError
+            except ValueError:
+                alert("Time Quantum must be a positive integer.")
+                return
+            results, gantt = BatchScheduler.round_robin(batch_processes, q)
+
+        results.sort(key=lambda x: int(x.pid[1:]) if x.pid.startswith("P") and x.pid[1:].isdigit() else x.pid)
+        batch_results = results
+        render_batch_table(results, True)
+        avg_tat = sum(p.turnaround_time for p in results) / len(results)
+        avg_wt = sum(p.waiting_time for p in results) / len(results)
+        document.getElementById("b-metrics").innerText = (
+            f"Average Turnaround Time: {avg_tat:.2f} | Average Waiting Time: {avg_wt:.2f}"
+        )
+        draw_gantt_canvas("b-canvas", "b-timeline-label", gantt, batch_colors)
+
+    def batch_csv_string() -> str:
+        out = io.StringIO()
+        w = csv.writer(out)
+        if batch_results:
+            w.writerow(["PID", "Arrival", "Burst", "Priority", "Completion", "Turnaround", "Waiting"])
+            for p in batch_results:
+                w.writerow([p.pid, p.arrival_time, p.burst_time, p.priority, p.completion_time, p.turnaround_time, p.waiting_time])
+        else:
+            w.writerow(["PID", "Arrival", "Burst", "Priority"])
+            for p in batch_processes:
+                w.writerow([p.pid, p.arrival_time, p.burst_time, p.priority])
+        return out.getvalue()
+
+    # --- Continuous Mode Functions ---
+    def render_continuous_views(auto_scroll: bool = False):
+        tbody = document.getElementById("c-tbody")
+        rows_html = []
+        for p in live_engine.processes:
+            comp = p.completion_time if p.completion_time is not None else "-"
+            tat = p.turnaround_time if p.turnaround_time is not None else "-"
+            wt = p.waiting_time if p.waiting_time is not None else "-"
+            rows_html.append(
+                f"<tr><td>{p.pid}</td><td>{p.arrival_time}</td><td>{p.burst_time}</td><td>{p.remaining_time}</td>"
+                f"<td>{p.priority}</td><td>{p.state}</td><td>{comp}</td><td>{tat}</td><td>{wt}</td></tr>"
+            )
+        tbody.innerHTML = "".join(rows_html)
+        if auto_scroll:
+            wrap = document.getElementById("c-table-wrap")
+            wrap.scrollTop = wrap.scrollHeight
+
+        completed = [p for p in live_engine.processes if p.completion_time is not None]
+        total = len(live_engine.processes)
+        if completed:
+            avg_tat = sum(p.turnaround_time for p in completed) / len(completed)
+            avg_wt = sum(p.waiting_time for p in completed) / len(completed)
+            document.getElementById("c-metrics").innerText = (
+                f"Completed: {len(completed)} / {total} | Average Turnaround Time: {avg_tat:.2f} | Average Waiting Time: {avg_wt:.2f}"
+            )
+        else:
+            document.getElementById("c-metrics").innerText = (
+                f"Completed: 0 / {total} | Average Turnaround Time: - | Average Waiting Time: -"
+            )
+
+        draw_gantt_canvas(
+            "c-canvas", "c-timeline-label", live_engine.gantt, live_colors,
+            scroll_id="c-gantt-scroll" if auto_scroll else None
+        )
+
+    def cont_seed(event=None):
+        if is_streaming:
+            stop_continuous_stream()
+        try:
+            count = max(1, min(50, int(document.getElementById("c-gen-count").value)))
+        except ValueError:
+            count = 4
+        live_colors.clear()
+        initial = []
+        arr = 0
+        for i in range(1, count + 1):
+            arr += random.randint(0, 2)
+            initial.append(Process(f"P{i}", arr, random.randint(2, 8), random.randint(1, 5)))
+        live_engine.load_processes(initial)
+        render_continuous_views(False)
+        document.getElementById("c-status").innerText = "Clock: 0 | Ready"
+
+    def cont_add(event=None):
+        pid = document.getElementById("c-pid").value.strip()
+        try:
+            arr_raw = document.getElementById("c-arrival").value.strip()
+            arr = int(arr_raw) if arr_raw != "" else live_engine.current_time
+            burst = int(document.getElementById("c-burst").value)
+            prio = int(document.getElementById("c-priority").value)
+            if not pid or arr < live_engine.current_time or burst <= 0 or prio < 1:
+                raise ValueError
+        except ValueError:
+            alert(f"Enter valid PID, Arrival >= current clock ({live_engine.current_time}), Burst > 0, and Priority >= 1.")
+            return
+        if any(p.pid == pid for p in live_engine.processes):
+            alert(f"Process '{pid}' already exists.")
+            return
+        live_engine.append_process(Process(pid, arr, burst, prio))
+        render_continuous_views(True)
+        document.getElementById("c-pid").value = ""
+        document.getElementById("c-arrival").value = ""
+        document.getElementById("c-burst").value = ""
+
+    def cont_clear(event=None):
+        if is_streaming:
+            stop_continuous_stream()
+        live_engine.reset()
+        live_colors.clear()
+        render_continuous_views(False)
+        document.getElementById("c-status").innerText = "Clock: 0 | Cleared"
+
+    def cont_finish_queue(event=None):
+        if not live_engine.processes or not live_engine.has_unfinished_work():
+            alert("No unfinished processes in the queue.")
+            return
+        algo = document.getElementById("c-algo").value
+        try:
+            q = int(document.getElementById("c-quantum").value)
+            if algo == "Round Robin" and q <= 0:
+                raise ValueError
+        except ValueError:
+            alert("Time Quantum must be a positive integer.")
+            return
+        while live_engine.has_unfinished_work():
+            live_engine.step_one_tick(algo, max(1, q))
+        render_continuous_views(True)
+        document.getElementById("c-status").innerText = f"Clock: {live_engine.current_time} | Batch Complete"
+
+    def continuous_tick():
+        nonlocal ticks_since_spawn
+        if not is_streaming:
+            return
+        algo = document.getElementById("c-algo").value
+        try:
+            q = max(1, int(document.getElementById("c-quantum").value))
+        except ValueError:
+            q = 2
+        try:
+            spawn_rate = max(1, int(document.getElementById("c-spawn-rate").value))
+        except ValueError:
+            spawn_rate = 4
+
+        if ticks_since_spawn >= spawn_rate or not live_engine.processes:
+            live_engine.spawn_next_process()
+            ticks_since_spawn = 0
+
+        live_engine.step_one_tick(algo, q)
+        ticks_since_spawn += 1
+        render_continuous_views(True)
+        document.getElementById("c-status").innerText = f"Clock: {live_engine.current_time} | Streaming Live..."
+
+    tick_proxy = create_proxy(continuous_tick)
+
+    def start_continuous_stream():
+        nonlocal is_streaming, stream_timer_id, ticks_since_spawn
+        algo = document.getElementById("c-algo").value
+        if algo == "Round Robin":
+            try:
+                if int(document.getElementById("c-quantum").value) <= 0:
+                    raise ValueError
+            except ValueError:
+                alert("Time Quantum must be a positive integer.")
+                return
+        is_streaming = True
+        ticks_since_spawn = 0
+        document.getElementById("c-stream-btn").innerText = "⏹ Pause Stream"
+        document.getElementById("c-finish-btn").disabled = True
+        try:
+            speed = max(50, int(document.getElementById("c-speed").value))
+        except ValueError:
+            speed = 350
+        continuous_tick()
+        stream_timer_id = window.setInterval(tick_proxy, speed)
+
+    def stop_continuous_stream():
+        nonlocal is_streaming, stream_timer_id
+        is_streaming = False
+        if stream_timer_id is not None:
+            window.clearInterval(stream_timer_id)
+            stream_timer_id = None
+        document.getElementById("c-stream-btn").innerText = "∞ Start Continuous Stream"
+        document.getElementById("c-finish-btn").disabled = False
+        document.getElementById("c-status").innerText = f"Clock: {live_engine.current_time} | Paused"
+
+    def toggle_stream(event=None):
+        if is_streaming:
+            stop_continuous_stream()
+        else:
+            start_continuous_stream()
+
+    def cont_csv_string() -> str:
+        out = io.StringIO()
+        w = csv.writer(out)
+        w.writerow(["PID", "Arrival", "Burst", "Remaining", "Priority", "Status", "Completion", "Turnaround", "Waiting"])
+        for p in live_engine.processes:
+            w.writerow([
+                p.pid, p.arrival_time, p.burst_time, p.remaining_time, p.priority, p.state,
+                p.completion_time if p.completion_time is not None else "",
+                p.turnaround_time if p.turnaround_time is not None else "",
+                p.waiting_time if p.waiting_time is not None else ""
+            ])
+        return out.getvalue()
+
+    # --- CSV Modal & File Upload Handlers ---
+    def apply_csv_text(raw_text: str):
+        nonlocal batch_processes, batch_results
+        parsed = parse_csv_rows(raw_text)
+        if active_csv_target == "batch":
+            batch_processes = parsed
+            batch_results = []
+            batch_colors.clear()
+            render_batch_table(batch_processes, False)
+            draw_gantt_canvas("b-canvas", "b-timeline-label", [], batch_colors)
+            document.getElementById("b-status").innerText = f"Loaded {len(parsed)} processes."
+        else:
+            if is_streaming:
+                stop_continuous_stream()
+            live_colors.clear()
+            live_engine.load_processes(parsed)
+            render_continuous_views(False)
+            document.getElementById("c-status").innerText = f"Clock: 0 | Loaded {len(parsed)} from CSV"
+
+    def open_paste_modal(target: str):
+        nonlocal active_csv_target
+        active_csv_target = target
+        document.getElementById("csv-modal").classList.remove("hidden")
+
+    def on_modal_load(event=None):
+        try:
+            apply_csv_text(document.getElementById("csv-paste-area").value)
+            document.getElementById("csv-modal").classList.add("hidden")
+        except Exception as e:
+            alert(str(e))
+
+    async def on_file_selected(event):
+        files = event.target.files
+        if files.length == 0:
+            return
+        text = await files.item(0).text()
+        try:
+            apply_csv_text(text)
+        except Exception as e:
+            alert(str(e))
+        event.target.value = ""
+
+    # --- Wire DOM Events ---
+    def bind(el_id: str, event_name: str, fn):
+        document.getElementById(el_id).addEventListener(event_name, create_proxy(fn))
+
+    bind("btn-open-batch", "click", lambda e: show_view("batch"))
+    bind("btn-open-continuous", "click", lambda e: show_view("continuous"))
+    bind("btn-batch-home", "click", lambda e: show_view("home"))
+    bind("btn-cont-home", "click", lambda e: show_view("home"))
+
+    # Batch bindings
+    bind("b-add-btn", "click", batch_add)
+    bind("b-clear-btn", "click", batch_clear)
+    bind("b-gen-btn", "click", batch_generate)
+    bind("b-run-btn", "click", batch_run)
+    bind("b-algo", "change", lambda e: setattr(document.getElementById("b-quantum"), "disabled", e.target.value != "Round Robin"))
+    bind("b-copy-csv", "click", lambda e: window.navigator.clipboard.writeText(batch_csv_string()) and setattr(document.getElementById("b-status"), "innerText", "Copied CSV!"))
+    bind("b-save-csv", "click", lambda e: download_csv("batch_schedule.csv", batch_csv_string()))
+    bind("b-paste-csv", "click", lambda e: open_paste_modal("batch"))
+    bind("b-import-csv", "click", lambda e: (setattr(globals(), "active_csv_target", "batch"), document.getElementById("b-csv-file").click()))
+    bind("b-csv-file", "change", on_file_selected)
+
+    # Continuous bindings
+    bind("c-add-btn", "click", cont_add)
+    bind("c-clear-btn", "click", cont_clear)
+    bind("c-gen-btn", "click", cont_seed)
+    bind("c-finish-btn", "click", cont_finish_queue)
+    bind("c-stream-btn", "click", toggle_stream)
+    bind("c-algo", "change", lambda e: setattr(document.getElementById("c-quantum"), "disabled", e.target.value != "Round Robin"))
+    bind("c-copy-csv", "click", lambda e: window.navigator.clipboard.writeText(cont_csv_string()) and setattr(document.getElementById("c-status"), "innerText", "Copied CSV!"))
+    bind("c-save-csv", "click", lambda e: download_csv("continuous_schedule.csv", cont_csv_string()))
+    bind("c-paste-csv", "click", lambda e: open_paste_modal("continuous"))
+    bind("c-import-csv", "click", lambda e: (setattr(globals(), "active_csv_target", "continuous"), document.getElementById("c-csv-file").click()))
+    bind("c-csv-file", "change", on_file_selected)
+
+    # Modal bindings
+    bind("csv-modal-cancel", "click", lambda e: document.getElementById("csv-modal").classList.add("hidden"))
+    bind("csv-modal-load", "click", on_modal_load)
+
+    # Initialize default datasets & enable home screen buttons
+    batch_generate()
+    cont_seed()
+    document.getElementById("loading-banner").classList.add("hidden")
+    document.getElementById("btn-open-batch").disabled = False
+    document.getElementById("btn-open-continuous").disabled = False
+  </script>
+</body>
+</html>
