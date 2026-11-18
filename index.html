@@ -659,7 +659,6 @@ P4,5,3,2</textarea>
         y_bottom = 72
         axis_y = 92
 
-        # Horizontal timeline axis
         ctx.strokeStyle = "#4b5563"
         ctx.lineWidth = 2
         ctx.beginPath()
@@ -795,7 +794,6 @@ P4,5,3,2</textarea>
         link.click()
         URL.revokeObjectURL(url)
 
-    # --- Navigation ---
     def show_view(view_name: str):
         if view_name != "continuous" and is_streaming:
             stop_continuous_stream()
@@ -806,7 +804,6 @@ P4,5,3,2</textarea>
             else:
                 el.classList.add("hidden")
 
-    # --- Batch Mode Functions ---
     def render_batch_table(proc_list: List[Process], calculated: bool):
         tbody = document.getElementById("b-tbody")
         rows_html = []
@@ -821,7 +818,7 @@ P4,5,3,2</textarea>
         tbody.innerHTML = "".join(rows_html)
 
     def batch_generate(event=None):
-        nonlocal batch_processes, batch_results
+        global batch_processes, batch_results
         try:
             count = max(1, min(50, int(document.getElementById("b-gen-count").value)))
         except ValueError:
@@ -867,7 +864,7 @@ P4,5,3,2</textarea>
         draw_gantt_canvas("b-canvas", "b-timeline-label", [], batch_colors)
 
     def batch_run(event=None):
-        nonlocal batch_results
+        global batch_results
         if not batch_processes:
             alert("Add or auto-generate processes first.")
             return
@@ -913,7 +910,6 @@ P4,5,3,2</textarea>
                 w.writerow([p.pid, p.arrival_time, p.burst_time, p.priority])
         return out.getvalue()
 
-    # --- Continuous Mode Functions ---
     def render_continuous_views(auto_scroll: bool = False):
         tbody = document.getElementById("c-tbody")
         rows_html = []
@@ -1012,7 +1008,7 @@ P4,5,3,2</textarea>
         document.getElementById("c-status").innerText = f"Clock: {live_engine.current_time} | Batch Complete"
 
     def continuous_tick():
-        nonlocal ticks_since_spawn
+        global ticks_since_spawn
         if not is_streaming:
             return
         algo = document.getElementById("c-algo").value
@@ -1037,7 +1033,7 @@ P4,5,3,2</textarea>
     tick_proxy = create_proxy(continuous_tick)
 
     def start_continuous_stream():
-        nonlocal is_streaming, stream_timer_id, ticks_since_spawn
+        global is_streaming, stream_timer_id, ticks_since_spawn
         algo = document.getElementById("c-algo").value
         if algo == "Round Robin":
             try:
@@ -1058,7 +1054,7 @@ P4,5,3,2</textarea>
         stream_timer_id = window.setInterval(tick_proxy, speed)
 
     def stop_continuous_stream():
-        nonlocal is_streaming, stream_timer_id
+        global is_streaming, stream_timer_id
         is_streaming = False
         if stream_timer_id is not None:
             window.clearInterval(stream_timer_id)
@@ -1086,9 +1082,8 @@ P4,5,3,2</textarea>
             ])
         return out.getvalue()
 
-    # --- CSV Modal & File Upload Handlers ---
     def apply_csv_text(raw_text: str):
-        nonlocal batch_processes, batch_results
+        global batch_processes, batch_results
         parsed = parse_csv_rows(raw_text)
         if active_csv_target == "batch":
             batch_processes = parsed
@@ -1106,9 +1101,14 @@ P4,5,3,2</textarea>
             document.getElementById("c-status").innerText = f"Clock: 0 | Loaded {len(parsed)} from CSV"
 
     def open_paste_modal(target: str):
-        nonlocal active_csv_target
+        global active_csv_target
         active_csv_target = target
         document.getElementById("csv-modal").classList.remove("hidden")
+
+    def open_file_picker(target: str, input_id: str):
+        global active_csv_target
+        active_csv_target = target
+        document.getElementById(input_id).click()
 
     def on_modal_load(event=None):
         try:
@@ -1128,7 +1128,6 @@ P4,5,3,2</textarea>
             alert(str(e))
         event.target.value = ""
 
-    # --- Wire DOM Events ---
     def bind(el_id: str, event_name: str, fn):
         document.getElementById(el_id).addEventListener(event_name, create_proxy(fn))
 
@@ -1146,7 +1145,7 @@ P4,5,3,2</textarea>
     bind("b-copy-csv", "click", lambda e: window.navigator.clipboard.writeText(batch_csv_string()) and setattr(document.getElementById("b-status"), "innerText", "Copied CSV!"))
     bind("b-save-csv", "click", lambda e: download_csv("batch_schedule.csv", batch_csv_string()))
     bind("b-paste-csv", "click", lambda e: open_paste_modal("batch"))
-    bind("b-import-csv", "click", lambda e: (setattr(globals(), "active_csv_target", "batch"), document.getElementById("b-csv-file").click()))
+    bind("b-import-csv", "click", lambda e: open_file_picker("batch", "b-csv-file"))
     bind("b-csv-file", "change", on_file_selected)
 
     # Continuous bindings
@@ -1159,7 +1158,7 @@ P4,5,3,2</textarea>
     bind("c-copy-csv", "click", lambda e: window.navigator.clipboard.writeText(cont_csv_string()) and setattr(document.getElementById("c-status"), "innerText", "Copied CSV!"))
     bind("c-save-csv", "click", lambda e: download_csv("continuous_schedule.csv", cont_csv_string()))
     bind("c-paste-csv", "click", lambda e: open_paste_modal("continuous"))
-    bind("c-import-csv", "click", lambda e: (setattr(globals(), "active_csv_target", "continuous"), document.getElementById("c-csv-file").click()))
+    bind("c-import-csv", "click", lambda e: open_file_picker("continuous", "c-csv-file"))
     bind("c-csv-file", "change", on_file_selected)
 
     # Modal bindings
